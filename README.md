@@ -28,6 +28,17 @@ one- or two-word ASCII label:
 ./agent-status.py --provider claude --tiny
 ```
 
+`--provider` selects the agent whose live session is inspected. To use the
+other agent CLI only for generating the short label, add `--label-provider`:
+
+```sh
+./agent-status.py --provider codex --label-provider claude --tiny
+./agent-status.py --provider claude --label-provider codex --tiny
+```
+
+When `--label-provider` is omitted, it defaults to `--provider` for backward
+compatibility.
+
 Claude Code needs a one-time hook installation:
 
 ```sh
@@ -44,13 +55,14 @@ exit-status documentation.
 ## Requirements
 
 - Python 3.9 or newer
-- The selected provider's CLI (`codex` or `claude`)
+- The selected session provider's CLI (`codex` or `claude`)
+- The selected label provider's CLI when it differs from the session provider
 - `ps` and `lsof` for Codex session discovery
 
-The first request for a task sends its title to the selected provider's CLI to
-produce the short label. Labels are cached under `~/.cache/agent-status`, so
-polling an unchanged task does not repeat model requests. Claude hooks never
-call a model.
+The first request for a task sends its title to the selected label provider's
+CLI to produce the short label. Labels are cached by label provider under
+`~/.cache/agent-status`, so polling an unchanged task does not repeat model
+requests. Claude hooks never call a model.
 
 ## Configuration
 
@@ -75,4 +87,3 @@ non-public rollout files and an optional local SQLite schema. These details have
 no compatibility guarantee and may change in any Codex release. For a
 maintained integration, launch Codex through app-server and consume its
 documented thread and turn notifications instead.
-

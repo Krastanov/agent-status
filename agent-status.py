@@ -5,8 +5,10 @@ Purpose
 =======
 This is a local status helper, not an agent launcher. Its primary interface is
 ``--provider {codex,claude} --tiny``, which prints one ASCII lifecycle character
-immediately followed by a cached one- or two-word ASCII task label. Claude Code
-also supports ``--install`` to configure the lifecycle hooks used for tracking.
+immediately followed by a cached one- or two-word ASCII task label. Use
+``--label-provider`` when a different agent CLI should generate that label.
+Claude Code also supports ``--install`` to configure the lifecycle hooks used
+for tracking.
 
 Upstream stability
 ==================
@@ -22,9 +24,9 @@ but process or rollout changes can still break or silently degrade discovery.
 For a maintained integration, launch Codex through app-server and consume its
 documented thread and turn notifications instead.
 
-Hooks never call a model. Tiny labels are generated through the selected
-provider's CLI and cached by provider and task hash, so unchanged status polling
-does not repeat model requests.
+Hooks never call a model. Tiny labels are generated through the selected label
+provider's CLI and cached by label provider and task hash, so unchanged status
+polling does not repeat model requests.
 """
 
 from __future__ import annotations
@@ -417,13 +419,16 @@ def running_codex_sessions() -> list[dict[str, Any]]:
     return sorted(sessions, key=lambda item: item["updated_at_ms"], reverse=True)
 
 
-def codex_tiny_mode() -> int:
+def codex_tiny_mode(label_provider: str) -> int:
     sessions = running_codex_sessions()
     if not sessions:
         print("-None")
         return 1
     session = sessions[0]
-    print(f"{state_character(session.get('status'))}{cached_label('codex', session['title'])}")
+    print(
+        f"{state_character(session.get('status'))}"
+        f"{cached_label(label_provider, session['title'])}"
+    )
     return 0
 
 
@@ -504,7 +509,7 @@ def newest_live_claude_session() -> dict[str, Any] | None:
     return max(sessions, key=lambda state: state.get("updated_at", 0), default=None)
 
 
-def claude_tiny_mode() -> int:
+def claude_tiny_mode(label_provider: str) -> int:
     state = newest_live_claude_session()
     if state is None:
         print("-None")
@@ -512,7 +517,7 @@ def claude_tiny_mode() -> int:
     topic = state.get("topic")
     if not isinstance(topic, str) or not topic.strip():
         topic = Path(state.get("cwd") or "Claude").name or "Claude"
-    print(f"{state_character(state.get('status'))}{cached_label('claude', topic)}")
+    print(f"{state_character(state.get('status'))}{cached_label(label_provider, topic)}")
     return 0
 
 
@@ -609,6 +614,7 @@ HELP_EPILOG = """
 examples:
   agent-status.py --provider codex --tiny
   agent-status.py --provider claude --tiny
+  agent-status.py --provider codex --label-provider claude --tiny
   agent-status.py --provider claude --install
 
 tiny output:
@@ -620,13 +626,19 @@ tiny output:
 
   Output is exactly one ASCII state character followed by a one- or two-word
   ASCII label and a newline. Diagnostics go to stderr. An unchanged task label
-  is served from the local cache without another model request.
+  is served from the local cache without another model request. By default the
+  session provider also generates the label; --label-provider overrides only
+  label generation.
 
-provider behavior:
+session provider behavior:
   codex    Discovers an already-running local CLI process and reads its open
            rollout. This depends on non-public Codex implementation details.
   claude   Reads state written by documented Claude Code lifecycle hooks. Run
            --install once, and again after moving or renaming this script.
+
+label provider behavior:
+  codex    Generates an uncached label with an isolated Codex CLI request.
+  claude   Generates an uncached label with an isolated Claude CLI request.
 
 configuration:
   AGENT_STATUS_CACHE_DIR       cache root (default: $XDG_CACHE_HOME/agent-status
@@ -659,7 +671,12 @@ def argument_parser() -> argparse.ArgumentParser:
         "--provider",
         required=True,
         choices=("codex", "claude"),
-        help="agent implementation whose session should be inspected",
+        help="agent implementation whose live session should be inspected",
+    )
+    parser.add_argument(
+        "--label-provider",
+        choices=("codex", "claude"),
+        help="agent CLI used to generate labels (default: --provider)",
     )
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument(
@@ -685,19 +702,23 @@ def main() -> int:
         parser.error("--install is available only with --provider claude")
     if args.hook and args.provider != "claude":
         parser.error("--hook is an internal Claude-only mode")
+    if (args.install or args.hook) and args.label_provider is not None:
+        parser.error("--label-provider is available only with --tiny or --label")
+
+    label_provider = args.label_provider or args.provider
 
     if args.install:
         return claude_install_mode()
     if args.hook:
         return claude_hook_mode()
     if args.label is not None:
-        print(generate_label(args.provider, args.label))
+        print(generate_label(label_provider, args.label))
         return 0
 
     try:
         if args.provider == "codex":
-            return codex_tiny_mode()
-        return claude_tiny_mode()
+            return codex_tiny_mode(label_provider)
+        return claude_tiny_mode(label_provider)
     except (OSError, RuntimeError, sqlite3.Error, subprocess.SubprocessError) as error:
         # Preserve the tiny stdout grammar even when discovery fails.
         print("?Error")
